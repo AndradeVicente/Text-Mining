@@ -1,0 +1,289 @@
+---
+title: "basics"
+output: html_document
+---
+
+# librarys 
+```{r}
+
+library(tidyverse)
+library(tidytext)
+library(ggtext)
+library(showtext)
+
+
+```
+
+# Fonts
+
+```{r}
+
+font_add_google(name = "Alice", family = "alice")
+font_add_google("Cormorant Garamond", "cormorant")
+showtext_auto()
+
+```
+
+
+# Tidy Text Format
+
+## Unnest_Tokens function
+Key inputs are columns names
+```{r}
+
+text <- c("Because I could not stop for Death -",
+          "He kindly stopped for me -",
+          "The Carriage held but just Ourselves -",
+          "and Immortality") 
+
+df_text = text |> tibble(line = 1:4)
+
+df_text |> unnest_tokens(word, text)
+ 
+
+```
+
+
+
+```{r}
+library(gutenbergr)
+
+gutenberg_works(author == "Lovecraft, H. P. (Howard Phillips)")
+gutenberg_works(author == "Carroll, Lewis")
+
+```
+
+
+
+```{r}
+
+
+
+alice_raw <- readLines("alice-wonderland.txt", encoding = "UTF-8")
+
+
+df_alice <- tibble(text = alice_raw) |>
+  
+  mutate(line_number = row_number(),
+         chapter = cumsum(str_detect(text, regex("^chapter [\\divxlc]", ignore_case = TRUE)))) |>
+  
+  filter(
+    line_number > which(str_detect(text, fixed("*** START OF THE PROJECT GUTENBERG EBOOK ALICE'S ADVENTURES IN WONDERLAND ***"))),
+    line_number < which(str_detect(text, fixed("*** END OF THE PROJECT GUTENBERG EBOOK ALICE'S ADVENTURES IN WONDERLAND ***"))))
+
+
+
+df_alice_words <- df_alice |> 
+
+  unnest_tokens(word, text) |> 
+
+  anti_join(stop_words) 
+
+```
+
+```{r}
+
+df_alice_words |> 
+  
+  count(word, sort = T) |> 
+  filter(n > 30) |> 
+  mutate(word = fct_reorder(word, n)) |> 
+  
+  ggplot(aes(y = n, x = word)) + 
+  geom_col() +
+  labs(x = NULL) + 
+  coord_flip()
+  
+```
+# Sentiment Analysis 
+
+## lexicons
+
+```{r}
+
+sentiments_afinn <- get_sentiments("afinn")
+sentiments_nrc <- get_sentiments("nrc")
+sentiments_bing <- get_sentiments("bing")
+
+
+```
+
+```{r}
+
+df_alice_words |> 
+  inner_join(sentiments_afinn) 
+
+df_alice_words |> 
+  inner_join(sentiments_nrc) 
+
+```
+
+## sentiments by chapter
+### afinn
+
+```{r}
+df_alice_words |> 
+  inner_join(sentiments_afinn) |> group_by(chapter, word) |> summarise(value = sum(value)) |> arrange(chapter, value)
+```
+
+
+
+```{r}
+
+df_alice_words |> 
+  inner_join(sentiments_afinn) |> 
+  
+  group_by(chapter) |> 
+  summarise(sentiment = sum(value)) |> 
+  
+  ungroup() |>
+  
+  ggplot(aes(x = chapter, y = sentiment)) + 
+  geom_col()
+  
+  
+
+```
+
+### bing
+
+
+```{r}
+
+df_alice_words |> 
+  inner_join(sentiments_bing) |> 
+  
+  count(chapter, sentiment) |> 
+  
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) |> 
+  
+  mutate(sentiment = positive - negative) |> 
+  
+  ggplot(aes(x = chapter, y = sentiment)) + 
+  geom_col()
+
+```
+### nrc
+
+```{r}
+
+df_alice_words |> 
+  inner_join(sentiments_nrc) |> 
+  count(chapter, sentiment) |> 
+  
+  ggplot(aes(x = chapter, y = n, fill = sentiment)) + 
+  geom_col(position = "stack")
+
+```
+
+
+### Comparing the lexicons
+
+afinn measures sentiment with a numeric score. while the other two categorize words in a binary fashion.  
+
+
+```{r afinn}
+
+afinn <- df_alice_words |> 
+  inner_join(get_sentiments("afinn"), by = c("word")) |> 
+  
+  group_by(chapter) |> 
+  summarize(sentiment = sum(value)) |> 
+  mutate(method = "Afinn")
+
+  
+```
+
+
+```{r}
+
+bing_and_ncr <- bind_rows(
+  df_alice_words |> 
+    inner_join(get_sentiments("bing")) |> 
+    mutate(method = "Bing et al."),
+  df_alice_words |>
+    inner_join(get_sentiments("nrc")) |>
+    filter(sentiment %in% c("positive", "negative")) |> 
+    mutate(method = "NRC")) |> 
+  
+  count(method, chapter, sentiment) |> 
+  
+  pivot_wider(names_from = sentiment,
+              values_from = n,
+              values_fill = 0) |>
+  
+  mutate(sentiment = positive - negative) |> 
+  
+  select(-negative, -positive)
+  
+
+all_lexicons <- bind_rows(afinn, bing_and_ncr)
+  
+```
+
+```{r}
+
+
+
+all_lexicons |> 
+  
+  mutate(chapter = as.factor(chapter)) |> 
+  filter(!chapter %in% c(0)) |> 
+  
+  ggplot(aes(x = chapter, y = sentiment, fill = method)) + 
+  geom_col(position = "dodge") +
+
+  theme_minimal() +
+
+  labs(title = "Sentiment Analysis of Alice Adventures in Wonderland",
+       subtitle = "By Chapter and Lexographic Method",
+       x = "Chapters",
+       y = "Sentiment",
+       caption = 'Data from Gutenberg Library | Reference From Julia Silge | Visualization by Vandrade',
+       fill = NULL) +
+  
+    theme(
+    text = element_text(family = "alice"),
+    
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    axis.text = element_text(size = 12),
+    legend.position = "top",
+    panel.grid = element_blank(),
+    plot.caption = element_markdown(size = 10, hjust = .95, color = "#000000"))
+
+
+```
+
+
+```{r}
+all_lexicons |> 
+  
+  ggplot(aes(x = chapter, y = sentiment)) + 
+  geom_col() +
+  facet_wrap(~method) +
+  
+  theme_minimal() + 
+  
+  labs(title = "Sentiment per Chapter", 
+       x = "Chapters",
+       y = "Sentiment")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
